@@ -7,9 +7,58 @@
   --color-dark-border: rgba(255, 255, 255, 0.1);
 }
 
+/* ============================================ */
+/* Theme Variables                               */
+/* ============================================ */
+
+:root {
+  /* Dark theme (default) */
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-card: rgba(255, 255, 255, 0.05);
+  --bg-card-strong: rgba(255, 255, 255, 0.08);
+  --bg-card-hover: rgba(255, 255, 255, 0.1);
+  --bg-input: rgba(255, 255, 255, 0.05);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --text-primary: #ffffff;
+  --text-secondary: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+  --shadow-color: rgba(0, 0, 0, 0.3);
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-strong-bg: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-strong-border: rgba(255, 255, 255, 0.15);
+  --autofill-bg: #1e293b;
+  --scrollbar-thumb: rgba(239, 68, 68, 0.3);
+}
+
+[data-theme="light"] {
+  --bg-primary: #f0f4f8;
+  --bg-secondary: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.85);
+  --bg-card-strong: rgba(255, 255, 255, 0.95);
+  --bg-card-hover: rgba(255, 255, 255, 1);
+  --bg-input: rgba(0, 0, 0, 0.04);
+  --border-color: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --text-primary: #0f172a;
+  --text-secondary: #1e293b;
+  --text-muted: #475569;
+  --text-faint: #94a3b8;
+  --shadow-color: rgba(0, 0, 0, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-strong-bg: rgba(255, 255, 255, 0.85);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-strong-border: rgba(0, 0, 0, 0.12);
+  --autofill-bg: #ffffff;
+  --scrollbar-thumb: rgba(239, 68, 68, 0.4);
+}
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(239, 68, 68, 0.3) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -21,16 +70,17 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(239, 68, 68, 0.3);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background: #0f172a;
-  color: white;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 @keyframes pulse-glow {
@@ -52,17 +102,28 @@ body {
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--glass-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 
 .glass-strong {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-strong-bg);
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--glass-strong-border);
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+/* Light theme specific glass effects */
+[data-theme="light"] .glass {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .glass-strong {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
 }
 
 .gradient-text {
@@ -92,7 +153,57 @@ body {
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0px 1000px #1e293b inset;
-  -webkit-text-fill-color: white;
-  caret-color: white;
+  -webkit-box-shadow: 0 0 0px 1000px var(--autofill-bg) inset;
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--text-primary);
+}
+
+/* Theme-aware utility classes */
+.themed-bg {
+  background: var(--bg-primary);
+  transition: background 0.3s ease;
+}
+
+.themed-bg-secondary {
+  background: var(--bg-secondary);
+  transition: background 0.3s ease;
+}
+
+.themed-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.themed-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+.themed-text {
+  color: var(--text-primary);
+  transition: color 0.3s ease;
+}
+
+.themed-text-secondary {
+  color: var(--text-secondary);
+  transition: color 0.3s ease;
+}
+
+.themed-text-muted {
+  color: var(--text-muted);
+  transition: color 0.3s ease;
+}
+
+/* Light theme adjustments for select dropdowns */
+[data-theme="light"] select option {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+select option {
+  background-color: #1e293b;
+  color: #ffffff;
 }

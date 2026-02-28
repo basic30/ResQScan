@@ -11,6 +11,7 @@ import Home from './pages/Home';
 import Auth from './pages/Auth';
 import Dashboard from './pages/Dashboard';
 import Emergency from './pages/Emergency';
+import ScanCard from './pages/ScanCard';
 
 // Layout with Navbar for main pages
 function MainLayout() {
@@ -27,14 +28,18 @@ export default function App() {
     <AppProvider>
       <HashRouter>
         <Routes>
-          {/* Emergency page - no navbar, standalone */}
+          {/* Scan Card page - no navbar, standalone, public */}
+          <Route path="/scan/:data" element={<ScanCard />} />
+
+          {/* Emergency page - no navbar, standalone (legacy) */}
           <Route path="/emergency/:data" element={<Emergency />} />
 
           {/* All other pages with navbar */}
           <Route element={<MainLayout />}>
             <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Auth mode="login" />} />
-            <Route path="/signup" element={<Auth mode="signup" />} />
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/login" element={<Auth />} />
+            <Route path="/signup" element={<Auth />} />
             <Route path="/dashboard" element={<Dashboard />} />
           </Route>
         </Routes>

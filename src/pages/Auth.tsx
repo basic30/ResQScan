@@ -1,198 +1,296 @@
-// ============================================
-// ResQScan Authentication Page
-// Login & Signup with glassmorphism design
-// ============================================
-
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+// Auth Page - Login and Signup with Firebase Authentication
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 
-interface AuthProps {
-  mode: 'login' | 'signup';
-}
-
-export default function Auth({ mode }: AuthProps) {
-  const { login, signup, t } = useApp();
+const Auth: React.FC = () => {
   const navigate = useNavigate();
-
+  const { login, signup, t, theme } = useApp();
+  
+  const [isSignup, setIsSignup] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
+    setIsLoading(true);
 
-    // Simulate network delay
-    await new Promise(r => setTimeout(r, 800));
-
-    if (mode === 'signup') {
-      if (password !== confirmPassword) {
-        setError('Passwords do not match');
-        setLoading(false);
-        return;
-      }
-      if (password.length < 6) {
-        setError('Password must be at least 6 characters');
-        setLoading(false);
-        return;
-      }
-      const result = signup(email, password, name);
-      if (result.success) {
+    try {
+      if (isSignup) {
+        // Validation
+        if (!name.trim()) {
+          throw new Error('Please enter your name');
+        }
+        if (password.length < 6) {
+          throw new Error('Password must be at least 6 characters');
+        }
+        if (password !== confirmPassword) {
+          throw new Error('Passwords do not match');
+        }
+        
+        await signup(name.trim(), email.trim(), password);
         navigate('/dashboard');
       } else {
-        setError(result.error || 'Signup failed');
-      }
-    } else {
-      const result = login(email, password);
-      if (result.success) {
+        await login(email.trim(), password);
         navigate('/dashboard');
-      } else {
-        setError(result.error || 'Login failed');
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setIsLoading(false);
     }
-    setLoading(false);
   };
 
-  const isLogin = mode === 'login';
+  const toggleMode = () => {
+    setIsSignup(!isSignup);
+    setError('');
+    setName('');
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  const isDark = theme === 'dark';
 
   return (
-    <div className="min-h-screen bg-[#0f172a] flex items-center justify-center px-4 pt-20 pb-8">
-      {/* Background Effects */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/4 w-80 h-80 bg-red-500/8 rounded-full blur-[120px]" />
-        <div className="absolute bottom-1/3 right-1/4 w-80 h-80 bg-orange-500/8 rounded-full blur-[120px]" />
+    <div className={`min-h-screen flex items-center justify-center px-4 py-12 ${
+      isDark 
+        ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900' 
+        : 'bg-gradient-to-br from-gray-100 via-white to-gray-100'
+    }`}>
+      {/* Background Elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className={`absolute top-1/4 left-1/4 w-96 h-96 ${
+          isDark ? 'bg-red-500/10' : 'bg-red-500/5'
+        } rounded-full blur-3xl`}></div>
+        <div className={`absolute bottom-1/4 right-1/4 w-96 h-96 ${
+          isDark ? 'bg-orange-500/10' : 'bg-orange-500/5'
+        } rounded-full blur-3xl`}></div>
       </div>
 
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="relative w-full max-w-md"
+        transition={{ duration: 0.5 }}
+        className={`relative w-full max-w-md ${
+          isDark 
+            ? 'bg-white/5 border-white/10' 
+            : 'bg-white border-gray-200 shadow-xl'
+        } backdrop-blur-xl rounded-3xl border p-8`}
       >
-        {/* Card */}
-        <div className="glass rounded-3xl p-8 sm:p-10">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <Link to="/" className="inline-flex items-center gap-2 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center shadow-lg shadow-red-500/25">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                </svg>
-              </div>
-              <span className="text-xl font-bold gradient-text">ResQScan</span>
-            </Link>
-            <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">
-              {isLogin ? t('loginTitle') : t('signupTitle')}
-            </h1>
-            <p className="text-sm text-gray-400">
-              {isLogin ? t('loginSubtitle') : t('signupSubtitle')}
-            </p>
-          </div>
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring', stiffness: 200, delay: 0.2 }}
+            className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-red-500 to-orange-500 rounded-2xl mb-4 shadow-lg shadow-red-500/25"
+          >
+            <span className="text-white text-2xl font-bold">R</span>
+          </motion.div>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-red-400 to-orange-400 bg-clip-text text-transparent">
+            ResQScan
+          </h1>
+          <p className={`text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+            {t('tagline')}
+          </p>
+        </div>
 
-          {/* Error Message */}
+        {/* Title */}
+        <AnimatePresence mode="wait">
+          <motion.h2
+            key={isSignup ? 'signup' : 'login'}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className={`text-xl font-semibold text-center mb-6 ${
+              isDark ? 'text-white' : 'text-gray-800'
+            }`}
+          >
+            {isSignup ? t('createAccount') : t('welcomeBack')}
+          </motion.h2>
+        </AnimatePresence>
+
+        {/* Error Message */}
+        <AnimatePresence>
           {error && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-6 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center"
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-xl text-red-400 text-sm text-center"
             >
               {error}
             </motion.div>
           )}
+        </AnimatePresence>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1.5">{t('nameLabel')}</label>
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <AnimatePresence>
+            {isSignup && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  {t('fullName')}
+                </label>
                 <input
                   type="text"
                   value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder={t('namePlaceholder')}
-                  required
-                  className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/50 transition-all text-sm"
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={t('enterFullName')}
+                  className={`w-full px-4 py-3 rounded-xl border ${
+                    isDark 
+                      ? 'bg-white/5 border-white/10 text-white placeholder-gray-500 focus:border-red-500/50' 
+                      : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-red-500'
+                  } focus:outline-none focus:ring-2 focus:ring-red-500/20 transition-all`}
+                  required={isSignup}
                 />
-              </div>
+              </motion.div>
             )}
+          </AnimatePresence>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1.5">{t('emailLabel')}</label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder={t('emailPlaceholder')}
-                required
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/50 transition-all text-sm"
-              />
-            </div>
+          <div>
+            <label className={`block text-sm font-medium mb-2 ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              {t('email')}
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder={t('enterEmail')}
+              className={`w-full px-4 py-3 rounded-xl border ${
+                isDark 
+                  ? 'bg-white/5 border-white/10 text-white placeholder-gray-500 focus:border-red-500/50' 
+                  : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-red-500'
+              } focus:outline-none focus:ring-2 focus:ring-red-500/20 transition-all`}
+              required
+            />
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1.5">{t('passwordLabel')}</label>
+          <div>
+            <label className={`block text-sm font-medium mb-2 ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              {t('password')}
+            </label>
+            <div className="relative">
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder={t('passwordPlaceholder')}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t('enterPassword')}
+                className={`w-full px-4 py-3 pr-12 rounded-xl border ${
+                  isDark 
+                    ? 'bg-white/5 border-white/10 text-white placeholder-gray-500 focus:border-red-500/50' 
+                    : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-red-500'
+                } focus:outline-none focus:ring-2 focus:ring-red-500/20 transition-all`}
                 required
                 minLength={6}
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/50 transition-all text-sm"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 ${
+                  isDark ? 'text-gray-400 hover:text-gray-300' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {showPassword ? '👁️' : '👁️‍🗨️'}
+              </button>
             </div>
+          </div>
 
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1.5">{t('confirmPasswordLabel')}</label>
+          <AnimatePresence>
+            {isSignup && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  {t('confirmPassword')}
+                </label>
                 <input
                   type="password"
                   value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder={t('confirmPasswordPlaceholder')}
-                  required
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder={t('confirmYourPassword')}
+                  className={`w-full px-4 py-3 rounded-xl border ${
+                    isDark 
+                      ? 'bg-white/5 border-white/10 text-white placeholder-gray-500 focus:border-red-500/50' 
+                      : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-red-500'
+                  } focus:outline-none focus:ring-2 focus:ring-red-500/20 transition-all`}
+                  required={isSignup}
                   minLength={6}
-                  className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/50 transition-all text-sm"
                 />
-              </div>
+              </motion.div>
             )}
+          </AnimatePresence>
 
+          <motion.button
+            type="submit"
+            disabled={isLoading}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white font-semibold rounded-xl shadow-lg shadow-red-500/25 hover:shadow-red-500/40 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {isLoading ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                {isSignup ? t('creatingAccount') : t('signingIn')}
+              </>
+            ) : (
+              <>
+                {isSignup ? t('signUp') : t('signIn')}
+              </>
+            )}
+          </motion.button>
+        </form>
+
+        {/* Toggle Mode */}
+        <div className="mt-6 text-center">
+          <p className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+            {isSignup ? t('alreadyHaveAccount') : t('dontHaveAccount')}{' '}
             <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3.5 rounded-xl text-sm font-bold bg-gradient-to-r from-red-500 to-orange-500 text-white shadow-lg shadow-red-500/25 hover:shadow-red-500/40 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98] mt-6"
+              type="button"
+              onClick={toggleMode}
+              className="text-red-400 hover:text-red-300 font-semibold transition-colors"
             >
-              {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Processing...
-                </span>
-              ) : (
-                isLogin ? t('loginButton') : t('signupButton')
-              )}
+              {isSignup ? t('signIn') : t('signUp')}
             </button>
-          </form>
+          </p>
+        </div>
 
-          {/* Switch mode */}
-          <div className="mt-6 text-center text-sm text-gray-400">
-            {isLogin ? t('noAccount') : t('hasAccount')}{' '}
-            <Link
-              to={isLogin ? '/signup' : '/login'}
-              className="font-semibold text-red-400 hover:text-red-300 transition-colors"
-            >
-              {isLogin ? t('signup') : t('login')}
-            </Link>
-          </div>
+        {/* Back to Home */}
+        <div className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className={`text-sm ${
+              isDark ? 'text-gray-500 hover:text-gray-400' : 'text-gray-400 hover:text-gray-600'
+            } transition-colors`}
+          >
+            ← {t('backToHome')}
+          </button>
         </div>
       </motion.div>
     </div>
   );
-}
+};
+
+export default Auth;
