@@ -2,7 +2,7 @@
 
 ResQScan is a secure, QR-based emergency medical identity system designed to provide instant access to critical life-saving information during medical emergencies.
 
-In high-pressure situations such as road accidents, sudden collapses, or trauma cases, doctors often operate without access to essential patient information. ResQScan bridges this gap by enabling structured, secure, and instant emergency data access — without requiring app installation or login during emergencies.
+In high-pressure situations such as road accidents, sudden collapses, or trauma cases, doctors often operate without access to essential patient information. ResQScan bridges this gap by enabling structured, secure, and instant emergency data access — without requiring app installation or login during emergencies. 
 
 ---
 
