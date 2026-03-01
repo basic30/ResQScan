@@ -12,6 +12,7 @@ import Auth from './pages/Auth';
 import Dashboard from './pages/Dashboard';
 import Emergency from './pages/Emergency';
 import ScanCard from './pages/ScanCard';
+import HealthChatbot from './components/HealthChatbot';
 
 // Layout with Navbar for main pages
 function MainLayout() {
@@ -44,6 +45,8 @@ export default function App() {
           </Route>
         </Routes>
       </HashRouter>
+      {/* Global Health Chatbot placed outside routing so it never disappears */}
+      <HealthChatbot />
     </AppProvider>
   );
 }

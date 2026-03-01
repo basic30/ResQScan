@@ -1,9 +1,9 @@
 // Dashboard Page - Full Featured with Firebase Integration
-// Tabs: Profile | QR Code | Donors | Scan History | Hospitals | Doctors
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'qrcode';
+import { jsPDF } from 'jspdf';
 import { useApp } from '../context/AppContext';
 import {
   saveQRCode,
@@ -26,6 +26,7 @@ const Dashboard: React.FC = () => {
     user,
     profile,
     isAuthenticated,
+    isLoading, // <-- ADD THIS
     logout,
     updateUserProfile,
     t,
@@ -48,6 +49,7 @@ const Dashboard: React.FC = () => {
     insuranceProvider: '', doctorName: '', emergencyPin: '', isBloodDonor: false,
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -78,14 +80,13 @@ const Dashboard: React.FC = () => {
   const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
   const qrRef = useRef<HTMLImageElement>(null);
 
-  // ─── Redirect if not authed ────────────────────────────────────────────────
   useEffect(() => {
-    if (!isAuthenticated) navigate('/auth');
-  }, [isAuthenticated, navigate]);
+    if (!isLoading && !isAuthenticated) navigate('/auth');
+  }, [isLoading, isAuthenticated, navigate]);
 
-  // ─── Sync profile → form ───────────────────────────────────────────────────
   useEffect(() => {
     if (profile) {
+      setIsEditing(!profile.fullName);
       setFormData({
         fullName: profile.fullName || '',
         age: profile.age || '',
@@ -104,7 +105,6 @@ const Dashboard: React.FC = () => {
     }
   }, [profile]);
 
-  // ─── Load saved QR ─────────────────────────────────────────────────────────
   useEffect(() => {
     const loadQR = async () => {
       if (!user) return;
@@ -127,17 +127,14 @@ const Dashboard: React.FC = () => {
     loadQR();
   }, [user]);
 
-  // ─── Load donors ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'donors') loadDonors();
   }, [activeTab, donorSearchGroup]);
 
-  // ─── Load scan history ─────────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'scans' && user) loadScanHistory();
   }, [activeTab, user]);
 
-  // ─── Filter doctors ────────────────────────────────────────────────────────
   useEffect(() => {
     const all = getNearbyDoctors(doctorSpecialty === 'all' ? undefined : doctorSpecialty);
     const q = doctorSearch.toLowerCase();
@@ -153,12 +150,15 @@ const Dashboard: React.FC = () => {
     );
   }, [doctorSearch, doctorSpecialty]);
 
-  // ─── Helpers ───────────────────────────────────────────────────────────────
   const loadDonors = async () => {
     setIsLoadingDonors(true);
     try {
       const list = await getBloodDonors(donorSearchGroup === 'all' ? undefined : donorSearchGroup);
-      setDonors(list);
+      
+      // Filter out the current logged-in user so they don't see themselves in the results
+      const filteredList = list.filter(donor => donor.odid !== user?.uid);
+      setDonors(filteredList);
+      
     } catch (e) {
       console.error(e);
     } finally {
@@ -195,14 +195,23 @@ const Dashboard: React.FC = () => {
 
   const handleSaveProfile = async () => {
     if (!user) return;
+    
+    // Mandatory field check
+    if (!formData.fullName || !formData.age || !formData.bloodGroup || !formData.emergencyContactName || !formData.emergencyContactPhone) {
+      setSaveMessage('⚠️ Please fill all mandatory fields (marked with *)');
+      setTimeout(() => setSaveMessage(''), 4000);
+      return;
+    }
+
     setIsSaving(true);
     setSaveMessage('');
     try {
       await updateUserProfile(formData);
-      setSaveMessage(t('profileSaved'));
+      setSaveMessage('✅ ' + t('profileSaved'));
+      setIsEditing(false);
       setTimeout(() => setSaveMessage(''), 4000);
     } catch {
-      setSaveMessage('Error saving profile. Please try again.');
+      setSaveMessage('❌ Error saving profile. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -220,11 +229,14 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // ─── QR Generation ─────────────────────────────────────────────────────────
   const buildAndSaveQR = async (version: number) => {
     if (!user) return;
     setIsGeneratingQR(true);
     try {
+      // Keep track of previously expired versions
+      const saved = await getQRCode(user.uid);
+      const existingExpired = saved?.expiredVersions || [];
+
       const data = {
         id: user.uid,
         v: version,
@@ -254,7 +266,7 @@ const Dashboard: React.FC = () => {
         version,
         generatedAt: new Date().toISOString(),
         isActive: true,
-        expiredVersions: [],
+        expiredVersions: existingExpired, // Preserving expired versions
       });
       setQrCodeUrl(url);
       setQrLink(link);
@@ -275,14 +287,19 @@ const Dashboard: React.FC = () => {
     try {
       const newVersion = await expireQRCode(user.uid);
       await buildAndSaveQR(newVersion);
-      setQrMessage(t('qrExpiredOld'));
+      setQrMessage('✅ ' + t('qrExpiredOld'));
       setTimeout(() => setQrMessage(''), 4000);
     } catch (e) {
       console.error(e);
     }
   };
 
-  // ─── Download PNG ──────────────────────────────────────────────────────────
+  const handleCopyQRLink = () => {
+    navigator.clipboard.writeText(qrLink);
+    setQrMessage('✅ Link copied to clipboard!');
+    setTimeout(() => setQrMessage(''), 3000);
+  };
+
   const downloadQRPng = () => {
     if (!qrCodeUrl) return;
     const a = document.createElement('a');
@@ -291,7 +308,6 @@ const Dashboard: React.FC = () => {
     a.click();
   };
 
-  // ─── Download PDF (canvas-based emergency card) ────────────────────────────
   const downloadQRPdf = () => {
     if (!qrCodeUrl) return;
     const canvas = document.createElement('canvas');
@@ -421,11 +437,15 @@ const Dashboard: React.FC = () => {
         canvas.height - 20
       );
 
-      // Download
-      const a = document.createElement('a');
-      a.download = `resqscan-card-${formData.fullName || 'emergency'}.png`;
-      a.href = canvas.toDataURL('image/png');
-      a.click();
+      // Generate PDF
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'px',
+        format: [canvas.width, canvas.height]
+      });
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`resqscan-card-${formData.fullName || 'emergency'}.pdf`);
     };
 
     const img = new Image();
@@ -433,12 +453,6 @@ const Dashboard: React.FC = () => {
     img.src = qrCodeUrl;
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate('/');
-  };
-
-  // ─── Glass card helper ─────────────────────────────────────────────────────
   const card = isDark
     ? 'bg-white/5 border-white/10 backdrop-blur-xl'
     : 'bg-white border-gray-200 shadow-sm';
@@ -451,7 +465,6 @@ const Dashboard: React.FC = () => {
   const headingCls = isDark ? 'text-white' : 'text-gray-800';
   const subCls = isDark ? 'text-gray-400' : 'text-gray-500';
 
-  // ─── Tabs config ───────────────────────────────────────────────────────────
   const tabs: { id: TabType; label: string; icon: string }[] = [
     { id: 'profile',   label: t('profileTab'),      icon: '👤' },
     { id: 'qrcode',   label: t('qrCodeTab'),        icon: '📱' },
@@ -461,58 +474,34 @@ const Dashboard: React.FC = () => {
     { id: 'doctors',  label: t('doctorsTab'),       icon: '👨‍⚕️' },
   ];
 
+  if (isLoading) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-slate-900' : 'bg-gray-100'}`}>
+        <div className="w-12 h-12 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) return null;
 
   return (
     <div className={`min-h-screen pt-16 md:pt-20 ${isDark ? 'bg-slate-900' : 'bg-gray-100'}`}>
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <header
-        className={`sticky top-16 md:top-20 z-40 ${
-          isDark ? 'bg-slate-800/70 border-white/10' : 'bg-white border-gray-200'
-        } backdrop-blur-xl border-b`}
-      >
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold bg-gradient-to-r from-red-400 to-orange-400 bg-clip-text text-transparent">
-              ResQScan
-            </h1>
-            <p className={`text-xs ${subCls} flex items-center gap-1`}>
-              {t('welcomeBack')},{' '}
-              <span className="font-medium">
-                {getTranslatedField('fullName', profile?.fullName || user?.displayName || '')}
-              </span>
-              {isAutoTranslating && (
-                <span className="inline-block animate-spin">🌐</span>
-              )}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* SOS */}
-            {formData.emergencyContactPhone && (
-              <a
-                href={`tel:${formData.emergencyContactPhone}`}
-                className="flex items-center gap-1 px-3 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-red-500/30"
-              >
-                🆘 SOS
-              </a>
-            )}
-            <button
-              onClick={handleLogout}
-              className={`px-3 py-2 text-sm rounded-xl transition-colors ${
-                isDark
-                  ? 'bg-white/10 hover:bg-white/20 text-white'
-                  : 'bg-gray-200 hover:bg-gray-300 text-gray-800'
-              }`}
-            >
-              {t('logout')}
-            </button>
-          </div>
-        </div>
-      </header>
-
       <div className="max-w-7xl mx-auto px-4 py-8">
+
+        {/* ── Welcome & SOS Header ────────────────────────────────────────────── */}
+        <div className="mb-8">
+          <h1 className={`text-2xl md:text-3xl font-bold mb-3 ${headingCls}`}>
+            {t('welcomeBack')}, <span className="text-red-500">{getTranslatedField('fullName', profile?.fullName || user?.displayName || '')}</span>! 👋
+          </h1>
+          {formData.emergencyContactPhone && (
+            <a
+              href={`tel:${formData.emergencyContactPhone}`}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-red-500/30 hover:-translate-y-1"
+            >
+              🆘 SOS - {formData.emergencyContactName || 'Emergency Contact'}
+            </a>
+          )}
+        </div>
 
         {/* ── Tabs ─────────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap gap-2 mb-6">
@@ -541,9 +530,11 @@ const Dashboard: React.FC = () => {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mb-4 p-3 bg-green-500/20 border border-green-500/40 rounded-xl text-green-400 text-sm text-center"
+              className={`mb-4 p-3 rounded-xl text-sm text-center font-semibold ${
+                saveMessage.includes('⚠️') || saveMessage.includes('❌') ? 'bg-red-500/20 text-red-400 border border-red-500/40' : 'bg-green-500/20 text-green-400 border border-green-500/40'
+              }`}
             >
-              ✅ {saveMessage}
+              {saveMessage}
             </motion.div>
           )}
         </AnimatePresence>
@@ -559,238 +550,221 @@ const Dashboard: React.FC = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className={`rounded-2xl border p-6 ${card}`}
+              className={`rounded-2xl border p-6 md:p-8 ${card}`}
             >
-              <h2 className={`text-xl font-bold mb-1 ${headingCls}`}>
-                👤 {t('profileTab')}
-              </h2>
-              <p className={`text-sm mb-6 ${subCls}`}>
-                {t('translationNote')}
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-
-                {/* Full Name */}
+              {/* Header with Edit Button */}
+              <div className="flex flex-wrap justify-between items-center gap-4 mb-8 border-b pb-4 border-gray-200 dark:border-white/10">
                 <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('fullName')}</label>
-                  <input
-                    type="text" name="fullName" value={formData.fullName}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('fullName', formData.fullName || '') !== formData.fullName && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('fullName', formData.fullName || '')}
-                    </p>
-                  )}
+                  <h2 className={`text-2xl font-bold ${headingCls}`}>
+                    👤 {t('profileTab')}
+                  </h2>
+                  <p className={`text-sm mt-1 ${subCls}`}>
+                    {t('translationNote')}
+                  </p>
                 </div>
+                {!isEditing && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-xl text-sm font-bold transition-colors border border-blue-500/30"
+                  >
+                    ✏️ Edit Profile
+                  </button>
+                )}
+              </div>
 
-                {/* Age */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('age')}</label>
-                  <input
-                    type="number" name="age" value={formData.age}
-                    onChange={handleInputChange} min="0" max="150"
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                </div>
-
-                {/* Blood Group */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('bloodGroup')}</label>
-                  <select
-                  name="bloodGroup" value={formData.bloodGroup}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                >
-                  <option value="" className={isDark ? 'bg-slate-800 text-white' : ''}>{t('selectBloodGroup')}</option>
-                  {bloodGroups.map(bg => (
-                    <option key={bg} value={bg} className={isDark ? 'bg-slate-800 text-white' : ''}>{bg}</option>
-                  ))}
-                </select>
-                </div>
-
-                {/* Allergies */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('allergies')}</label>
-                  <input
-                    type="text" name="allergies" value={formData.allergies}
-                    onChange={handleInputChange} placeholder={t('allergiesPlaceholder')}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('allergies', formData.allergies || '') !== formData.allergies && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('allergies', formData.allergies || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Chronic Conditions */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('chronicConditions')}</label>
-                  <input
-                    type="text" name="chronicConditions" value={formData.chronicConditions}
-                    onChange={handleInputChange} placeholder={t('chronicConditionsPlaceholder')}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('chronicConditions', formData.chronicConditions || '') !== formData.chronicConditions && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('chronicConditions', formData.chronicConditions || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Current Medications */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('currentMedications')}</label>
-                  <input
-                    type="text" name="currentMedications" value={formData.currentMedications}
-                    onChange={handleInputChange} placeholder={t('currentMedicationsPlaceholder')}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('currentMedications', formData.currentMedications || '') !== formData.currentMedications && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('currentMedications', formData.currentMedications || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Emergency Contact Name */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('emergencyContactName')}</label>
-                  <input
-                    type="text" name="emergencyContactName" value={formData.emergencyContactName}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('emergencyContactName', formData.emergencyContactName || '') !== formData.emergencyContactName && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('emergencyContactName', formData.emergencyContactName || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Emergency Contact Phone */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('emergencyContactPhone')}</label>
-                  <input
-                    type="tel" name="emergencyContactPhone" value={formData.emergencyContactPhone}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                </div>
-
-                {/* Emergency Contact Relation */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('emergencyContactRelation')}</label>
-                  <input
-                    type="text" name="emergencyContactRelation" value={formData.emergencyContactRelation}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('emergencyContactRelation', formData.emergencyContactRelation || '') !== formData.emergencyContactRelation && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('emergencyContactRelation', formData.emergencyContactRelation || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Insurance Provider */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
-                    {t('insuranceProvider')} <span className="text-gray-500 text-xs">({t('optional')})</span>
-                  </label>
-                  <input
-                    type="text" name="insuranceProvider" value={formData.insuranceProvider}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('insuranceProvider', formData.insuranceProvider || '') !== formData.insuranceProvider && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('insuranceProvider', formData.insuranceProvider || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Doctor Name */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
-                    {t('doctorName')} <span className="text-gray-500 text-xs">({t('optional')})</span>
-                  </label>
-                  <input
-                    type="text" name="doctorName" value={formData.doctorName}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
-                  {language !== 'en' && getTranslatedField('doctorName', formData.doctorName || '') !== formData.doctorName && (
-                    <p className="text-xs text-blue-400 mt-1">
-                      🌐 {getTranslatedField('doctorName', formData.doctorName || '')}
-                    </p>
-                  )}
-                </div>
-
-                {/* Emergency PIN */}
-                <div>
-                  <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
-                    {t('emergencyPin')} <span className="text-gray-500 text-xs">({t('optional')})</span>
-                  </label>
-                  <input
-                    type="password" name="emergencyPin" value={formData.emergencyPin}
-                    onChange={handleInputChange} placeholder={t('emergencyPinPlaceholder')} maxLength={6}
-                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                  />
+              {/* ─── SECTION: Personal Details ─── */}
+              <div className="mb-8">
+                <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${headingCls}`}>
+                  <span className="text-xl">🧑</span> Personal Details
+                </h3>
+                {/* Removed the background color classes here so it inherits the main card color */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 p-5 rounded-2xl border border-gray-200 dark:border-white/10 bg-transparent">
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
+                      {t('fullName')} <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text" name="fullName" value={formData.fullName}
+                      onChange={handleInputChange} required disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
+                      {t('age')} <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number" name="age" value={formData.age}
+                      onChange={handleInputChange} min="0" max="150" required disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
+                      {t('bloodGroup')} <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="bloodGroup" value={formData.bloodGroup}
+                      onChange={handleInputChange} required disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    >
+                      <option value="" className={isDark ? 'bg-slate-800 text-white' : ''}>{t('selectBloodGroup')}</option>
+                      {bloodGroups.map(bg => (
+                        <option key={bg} value={bg} className={isDark ? 'bg-slate-800 text-white' : ''}>{bg}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center mt-6">
+                    <label className={`flex items-center gap-3 cursor-pointer group w-max ${!isEditing && 'opacity-60 pointer-events-none'}`}>
+                      <div
+                        onClick={() => isEditing && setFormData(p => ({ ...p, isBloodDonor: !p.isBloodDonor }))}
+                        className={`relative w-11 h-6 rounded-full transition-colors ${
+                          formData.isBloodDonor ? 'bg-red-500' : isDark ? 'bg-white/20' : 'bg-gray-300'
+                        }`}
+                      >
+                        <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${formData.isBloodDonor ? 'translate-x-5' : ''}`} />
+                      </div>
+                      <span className={`${labelCls} font-medium`}>🩸 {t('bloodDonorYes')}</span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
-              {/* Blood Donor toggle */}
-              <div className="mt-5">
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <div
-                    onClick={() => setFormData(p => ({ ...p, isBloodDonor: !p.isBloodDonor }))}
-                    className={`relative w-11 h-6 rounded-full transition-colors ${
-                      formData.isBloodDonor ? 'bg-red-500' : isDark ? 'bg-white/20' : 'bg-gray-300'
-                    }`}
-                  >
-                    <div
-                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                        formData.isBloodDonor ? 'translate-x-5' : ''
-                      }`}
+              {/* ─── SECTION: Medical Information ─── */}
+              <div className="mb-8">
+                <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${headingCls}`}>
+                  <span className="text-xl">🩺</span> Medical Information
+                </h3>
+                {/* Removed the background color classes here so it inherits the main card color */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 p-5 rounded-2xl border border-gray-200 dark:border-white/10 bg-transparent">
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('allergies')}</label>
+                    <input
+                      type="text" name="allergies" value={formData.allergies}
+                      onChange={handleInputChange} placeholder={t('allergiesPlaceholder')} disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
                     />
                   </div>
-                  <span className={`${labelCls} font-medium`}>
-                    🩸 {t('bloodDonorYes')}
-                  </span>
-                </label>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('chronicConditions')}</label>
+                    <input
+                      type="text" name="chronicConditions" value={formData.chronicConditions}
+                      onChange={handleInputChange} placeholder={t('chronicConditionsPlaceholder')} disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('currentMedications')}</label>
+                    <textarea
+                      name="currentMedications" value={formData.currentMedications}
+                      onChange={handleInputChange} placeholder={t('currentMedicationsPlaceholder')} disabled={!isEditing}
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls} resize-none`}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* ─── SECTION: Emergency Contacts & Providers ─── */}
+              <div className="mb-8">
+                <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${headingCls}`}>
+                  <span className="text-xl">🚨</span> Emergency Contacts
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 p-5 rounded-2xl bg-red-500/5 dark:bg-red-500/10 border border-red-500/20">
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
+                      {t('emergencyContactName')} <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text" name="emergencyContactName" value={formData.emergencyContactName}
+                      onChange={handleInputChange} required disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500/50 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
+                      {t('emergencyContactPhone')} <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="tel" name="emergencyContactPhone" value={formData.emergencyContactPhone}
+                      onChange={handleInputChange} required disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500/50 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>{t('emergencyContactRelation')}</label>
+                    <input
+                      type="text" name="emergencyContactRelation" value={formData.emergencyContactRelation}
+                      onChange={handleInputChange} disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500/50 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${labelCls}`}>
+                      {t('insuranceProvider')} <span className="text-gray-500 text-xs">({t('optional')})</span>
+                    </label>
+                    <input
+                      type="text" name="insuranceProvider" value={formData.insuranceProvider}
+                      onChange={handleInputChange} disabled={!isEditing}
+                      className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500/50 disabled:opacity-60 disabled:cursor-not-allowed ${inputCls}`}
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Action buttons */}
-              <div className="mt-7 flex flex-wrap gap-3">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleSaveProfile}
-                  disabled={isSaving}
-                  className="px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white font-semibold rounded-xl shadow-lg shadow-red-500/20 hover:shadow-red-500/40 transition-all disabled:opacity-60"
-                >
-                  {isSaving ? (
-                    <span className="flex items-center gap-2">
-                      <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      Saving...
-                    </span>
-                  ) : `💾 ${t('saveProfile')}`}
-                </motion.button>
+              {isEditing && (
+                <div className="flex flex-wrap gap-3 mt-8">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSaveProfile}
+                    disabled={isSaving}
+                    className="px-8 py-3.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-green-500/30 hover:shadow-green-500/50 transition-all disabled:opacity-60 w-full sm:w-auto"
+                  >
+                    {isSaving ? 'Saving...' : `💾 Save Profile`}
+                  </motion.button>
 
-                <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className={`px-6 py-3 rounded-xl font-semibold border transition-colors ${
-                    isDark
-                      ? 'border-red-500/40 text-red-400 hover:bg-red-500/10'
-                      : 'border-red-300 text-red-600 hover:bg-red-50'
-                  }`}
-                >
-                  🗑️ {t('deleteAccount')}
-                </button>
-              </div>
+                  <button
+                    onClick={() => {
+                      setIsEditing(false);
+                      // Reset to original data to discard changes
+                      setFormData({
+                        fullName: profile?.fullName || '',
+                        age: profile?.age || '',
+                        bloodGroup: profile?.bloodGroup || '',
+                        allergies: profile?.allergies || '',
+                        chronicConditions: profile?.chronicConditions || '',
+                        currentMedications: profile?.currentMedications || '',
+                        emergencyContactName: profile?.emergencyContactName || '',
+                        emergencyContactPhone: profile?.emergencyContactPhone || '',
+                        emergencyContactRelation: profile?.emergencyContactRelation || '',
+                        insuranceProvider: profile?.insuranceProvider || '',
+                        doctorName: profile?.doctorName || '',
+                        emergencyPin: profile?.emergencyPin || '',
+                        isBloodDonor: profile?.isBloodDonor || false,
+                      });
+                    }}
+                    className={`px-8 py-3.5 rounded-xl font-bold border transition-colors w-full sm:w-auto ${
+                      isDark ? 'border-gray-600 text-gray-400 hover:bg-gray-800' : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                  
+                  {/* Delete button pushed to the right */}
+                  <div className="sm:ml-auto w-full sm:w-auto mt-4 sm:mt-0">
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className={`px-6 py-3.5 rounded-xl font-bold border transition-colors w-full ${
+                        isDark ? 'border-red-500/40 text-red-400 hover:bg-red-500/10' : 'border-red-300 text-red-600 hover:bg-red-50'
+                      }`}
+                    >
+                      🗑️ {t('deleteAccount')}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Delete confirm */}
               <AnimatePresence>
@@ -799,31 +773,82 @@ const Dashboard: React.FC = () => {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 8 }}
-                    className={`mt-4 p-4 rounded-xl border ${
-                      isDark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'
-                    }`}
+                    className={`mt-6 p-5 rounded-xl border ${isDark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}
                   >
-                    <p className="text-red-400 font-medium mb-3">⚠️ {t('deleteConfirm')}</p>
-                    <div className="flex gap-3">
-                      <button
-                        onClick={handleDeleteAccount}
-                        disabled={isDeleting}
-                        className="px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-semibold"
-                      >
-                        {isDeleting ? 'Deleting...' : 'Yes, Delete'}
+                    <p className="text-red-500 font-bold mb-3 text-lg">⚠️ {t('deleteConfirm')}</p>
+                    <p className="text-sm mb-4 opacity-80">This action cannot be undone. All your emergency data will be permanently erased.</p>
+                    <div className="flex flex-wrap gap-3">
+                      <button onClick={handleDeleteAccount} disabled={isDeleting} className="px-6 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-500/30 transition-all">
+                        {isDeleting ? 'Deleting...' : 'Yes, Delete My Account'}
                       </button>
-                      <button
-                        onClick={() => setShowDeleteConfirm(false)}
-                        className={`px-4 py-2 rounded-xl text-sm font-semibold ${
-                          isDark ? 'bg-white/10 text-white' : 'bg-gray-200 text-gray-800'
-                        }`}
-                      >
+                      <button onClick={() => setShowDeleteConfirm(false)} className={`px-6 py-2.5 rounded-xl text-sm font-bold ${isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'} transition-all`}>
                         Cancel
                       </button>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* Attractive Profile Card Preview (Centered) */}
+              <div className="mt-16 pt-10 border-t border-gray-200 dark:border-white/10">
+                <div className="text-center mb-8">
+                  <h3 className={`text-xl font-black ${headingCls}`}>💳 Your Emergency Card Preview</h3>
+                  <p className={`text-sm mt-1 ${subCls}`}>This is how responders will see your basic information.</p>
+                </div>
+                
+                {/* Center wrapper */}
+                <div className="flex justify-center w-full">
+                  <div className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 hover:scale-105 transition-transform duration-300">
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-red-500 to-orange-600 p-4 flex justify-between items-center text-white">
+                      <span className="font-bold text-lg tracking-wider flex items-center gap-2"><span className="text-2xl">⚕</span> EMERGENCY CARD</span>
+                      <span className="text-sm font-bold bg-black/20 px-3 py-1 rounded-full">ResQScan</span>
+                    </div>
+                    
+                    {/* Body */}
+                    <div className="p-6 relative">
+                       <div className="absolute top-4 right-4 text-7xl opacity-5 pointer-events-none">🩸</div>
+                       
+                       <div className="flex items-center gap-5 mb-6 relative z-10">
+                         <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-red-500/20 to-orange-500/20 border border-red-500/30 flex items-center justify-center text-red-500 font-black text-3xl shadow-inner flex-shrink-0">
+                           {formData.bloodGroup || '?'}
+                         </div>
+                         <div className="min-w-0">
+                           <h4 className="text-2xl font-black text-white truncate">{formData.fullName || 'Your Name'}</h4>
+                           <div className="flex flex-wrap items-center gap-2 mt-1">
+                             <span className="bg-white/10 text-gray-300 text-xs px-2 py-1 rounded-md">{formData.age ? `${formData.age} Years` : 'Age'}</span>
+                             {formData.isBloodDonor && <span className="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded-md font-bold">✓ Blood Donor</span>}
+                           </div>
+                         </div>
+                       </div>
+                       
+                       <div className="grid grid-cols-2 gap-4 mb-6 relative z-10">
+                         <div className="bg-white/5 p-3.5 rounded-xl border border-white/5">
+                           <p className="text-xs text-gray-400 mb-1 uppercase tracking-wider font-semibold">Allergies</p>
+                           <p className="text-sm font-bold text-white break-words">{formData.allergies || 'None'}</p>
+                         </div>
+                         <div className="bg-white/5 p-3.5 rounded-xl border border-white/5">
+                           <p className="text-xs text-gray-400 mb-1 uppercase tracking-wider font-semibold">Conditions</p>
+                           <p className="text-sm font-bold text-white break-words">{formData.chronicConditions || 'None'}</p>
+                         </div>
+                       </div>
+
+                       <div className="bg-red-500/10 p-5 rounded-xl border border-red-500/20 relative z-10">
+                         <div className="flex items-center gap-2 mb-2">
+                           <span className="animate-pulse text-red-500">🔴</span>
+                           <p className="text-xs text-red-400 font-bold uppercase tracking-wider">Emergency Contact</p>
+                         </div>
+                         <p className="text-xl font-black text-white truncate">{formData.emergencyContactName || 'Not Set'}</p>
+                         <div className="flex items-center justify-between mt-1">
+                           <p className="text-sm text-gray-300 font-medium">{formData.emergencyContactRelation || 'Relation'}</p>
+                           <p className="text-sm text-white font-bold bg-white/10 px-2 py-0.5 rounded-md">{formData.emergencyContactPhone || 'No Phone'}</p>
+                         </div>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
             </motion.div>
           )}
 
@@ -842,16 +867,15 @@ const Dashboard: React.FC = () => {
                 📱 {t('qrCodeTab')}
               </h2>
 
-              {/* QR message */}
               <AnimatePresence>
                 {qrMessage && (
                   <motion.div
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
-                    className="mb-4 p-3 bg-green-500/20 border border-green-500/40 rounded-xl text-green-400 text-sm text-center"
+                    className="mb-4 p-3 bg-green-500/20 border border-green-500/40 rounded-xl text-green-400 font-semibold text-sm text-center"
                   >
-                    ✅ {qrMessage}
+                    {qrMessage}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -860,137 +884,71 @@ const Dashboard: React.FC = () => {
                 <div className={`text-center py-16 ${subCls}`}>
                   <p className="text-5xl mb-4">📋</p>
                   <p className="text-lg font-medium">{t('noProfileQR')}</p>
-                  <button
-                    onClick={() => setActiveTab('profile')}
-                    className="mt-4 px-5 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-xl text-sm font-semibold"
-                  >
+                  <button onClick={() => setActiveTab('profile')} className="mt-4 px-5 py-2 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-xl text-sm font-semibold">
                     Go to Profile →
                   </button>
                 </div>
               ) : qrCodeUrl ? (
                 <div className="text-center">
-                  {/* Status row */}
                   <div className="flex flex-wrap justify-center gap-3 mb-6">
                     <span className="flex items-center gap-1.5 px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm font-medium">
-                      <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                      {t('qrActive')}
+                      <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" /> {t('qrActive')}
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm ${isDark ? 'bg-white/10 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>
                       {t('qrVersion')}: v{qrVersion}
                     </span>
-                    {qrGeneratedAt && (
-                      <span className={`px-3 py-1 rounded-full text-sm ${isDark ? 'bg-white/10 text-gray-400' : 'bg-gray-100 text-gray-500'}`}>
-                        {t('qrGeneratedOn')}: {new Date(qrGeneratedAt).toLocaleDateString()}
-                      </span>
-                    )}
                   </div>
 
-                  {/* QR image */}
                   <div className="inline-block p-5 bg-white rounded-2xl shadow-2xl shadow-black/30 mb-6">
-                    <img
-                      ref={qrRef}
-                      src={qrCodeUrl}
-                      alt="Emergency QR Code"
-                      className="w-56 h-56 md:w-72 md:h-72"
-                    />
+                    <img ref={qrRef} src={qrCodeUrl} alt="Emergency QR" className="w-56 h-56 md:w-72 md:h-72" />
                   </div>
 
-                  {/* Scan link */}
-                  <div className={`max-w-lg mx-auto mb-6 p-3 rounded-xl text-xs break-all ${
-                    isDark ? 'bg-white/5 text-gray-500' : 'bg-gray-50 text-gray-400'
-                  }`}>
-                    {qrLink}
+                  {/* Shorter Clickable QR Link */}
+                  <div 
+                    onClick={handleCopyQRLink}
+                    className={`max-w-xs sm:max-w-md mx-auto mb-6 p-3 rounded-xl text-sm font-medium cursor-pointer transition-colors flex items-center justify-center gap-2 border ${
+                      isDark ? 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                    }`}
+                    title="Click to copy link"
+                  >
+                    <span className="truncate">🔗 {qrLink.substring(0, 42)}...</span>
+                    <span className="text-gray-400 text-lg">📋</span>
                   </div>
 
-                  {/* Buttons */}
                   <div className="flex flex-wrap justify-center gap-3">
-                    <motion.button
-                      whileHover={{ scale: 1.04 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={downloadQRPng}
-                      className="px-5 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white font-semibold rounded-xl shadow-lg"
-                    >
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }} onClick={downloadQRPng} className="px-5 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white font-semibold rounded-xl shadow-lg">
                       📥 {t('downloadPNG')}
                     </motion.button>
-                    <motion.button
-                      whileHover={{ scale: 1.04 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={downloadQRPdf}
-                      className={`px-5 py-3 rounded-xl font-semibold ${
-                        isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-                      }`}
-                    >
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }} onClick={downloadQRPdf} className={`px-5 py-3 rounded-xl font-semibold border ${isDark ? 'border-white/20 text-white hover:bg-white/10' : 'border-gray-300 text-gray-800 hover:bg-gray-100'}`}>
                       📄 {t('downloadPDF')}
                     </motion.button>
-                    <motion.button
-                      whileHover={{ scale: 1.04 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => setShowRegenerateConfirm(true)}
-                      className={`px-5 py-3 rounded-xl font-semibold border ${
-                        isDark
-                          ? 'border-orange-500/40 text-orange-400 hover:bg-orange-500/10'
-                          : 'border-orange-300 text-orange-600 hover:bg-orange-50'
-                      }`}
-                    >
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }} onClick={() => setShowRegenerateConfirm(true)} className={`px-5 py-3 rounded-xl font-semibold border ${isDark ? 'border-orange-500/40 text-orange-400 hover:bg-orange-500/10' : 'border-orange-300 text-orange-600 hover:bg-orange-50'}`}>
                       🔄 {t('regenerateQR')}
                     </motion.button>
                   </div>
 
-                  {/* Regenerate confirm */}
                   <AnimatePresence>
                     {showRegenerateConfirm && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 10 }}
-                        className={`mt-6 max-w-md mx-auto p-5 rounded-2xl border ${
-                          isDark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'
-                        }`}
-                      >
-                        <p className="text-red-400 font-medium mb-4 text-sm leading-relaxed">
-                          {t('qrRegenerateWarning')}
-                        </p>
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className={`mt-6 max-w-md mx-auto p-5 rounded-2xl border ${isDark ? 'bg-red-500/10 border-red-500/30' : 'bg-red-50 border-red-200'}`}>
+                        <p className="text-red-400 font-medium mb-4 text-sm leading-relaxed">{t('qrRegenerateWarning')}</p>
                         <div className="flex justify-center gap-3">
-                          <button
-                            onClick={handleRegenerateQR}
-                            className="px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-semibold"
-                          >
-                            {t('qrConfirmRegenerate')}
-                          </button>
-                          <button
-                            onClick={() => setShowRegenerateConfirm(false)}
-                            className={`px-4 py-2 rounded-xl text-sm font-semibold ${
-                              isDark ? 'bg-white/10 text-white' : 'bg-gray-200 text-gray-800'
-                            }`}
-                          >
-                            {t('qrCancelRegenerate')}
-                          </button>
+                          <button onClick={handleRegenerateQR} className="px-4 py-2 bg-red-500 text-white rounded-xl text-sm font-semibold">{t('qrConfirmRegenerate')}</button>
+                          <button onClick={() => setShowRegenerateConfirm(false)} className={`px-4 py-2 rounded-xl text-sm font-semibold ${isDark ? 'bg-white/10 text-white' : 'bg-gray-200 text-gray-800'}`}>{t('qrCancelRegenerate')}</button>
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </div>
               ) : (
-                /* No QR yet */
                 <div className="text-center py-16">
                   {isGeneratingQR ? (
-                    <div>
-                      <div className="w-16 h-16 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto mb-4" />
-                      <p className={`text-lg font-medium ${subCls}`}>{t('generatingQR')}</p>
-                    </div>
+                    <div><div className="w-16 h-16 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto mb-4" /><p className={`text-lg font-medium ${subCls}`}>{t('generatingQR')}</p></div>
                   ) : (
                     <div>
                       <div className="text-7xl mb-5">📱</div>
                       <p className={`mb-2 text-lg font-medium ${headingCls}`}>{t('qrReady')}</p>
                       <p className={`mb-8 text-sm ${subCls} max-w-sm mx-auto`}>{t('qrDescription')}</p>
-                      <motion.button
-                        whileHover={{ scale: 1.04 }}
-                        whileTap={{ scale: 0.97 }}
-                        onClick={handleGenerateQR}
-                        className="px-8 py-4 bg-gradient-to-r from-red-500 to-orange-500 text-white font-bold rounded-2xl shadow-xl shadow-red-500/30"
-                      >
-                        ✨ {t('generateQR')}
-                      </motion.button>
+                      <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }} onClick={handleGenerateQR} className="px-8 py-4 bg-gradient-to-r from-red-500 to-orange-500 text-white font-bold rounded-2xl shadow-xl shadow-red-500/30">✨ {t('generateQR')}</motion.button>
                     </div>
                   )}
                 </div>
@@ -1002,79 +960,34 @@ const Dashboard: React.FC = () => {
               DONORS TAB
           ════════════════════════════════════════════════════════════════ */}
           {activeTab === 'donors' && (
-            <motion.div
-              key="donors"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className={`rounded-2xl border p-6 ${card}`}
-            >
-              <h2 className={`text-xl font-bold mb-6 ${headingCls}`}>
-                🩸 {t('donorSearchTab')}
-              </h2>
-
-              {/* Filter */}
+            <motion.div key="donors" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className={`rounded-2xl border p-6 ${card}`}>
+              <h2 className={`text-xl font-bold mb-6 ${headingCls}`}>🩸 {t('donorSearchTab')}</h2>
               <div className="flex flex-wrap gap-3 mb-4">
-                <select
-                  value={donorSearchGroup}
-                  onChange={e => setDonorSearchGroup(e.target.value)}
-                  className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
-                >
+                <select value={donorSearchGroup} onChange={e => setDonorSearchGroup(e.target.value)} className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}>
                   <option value="all" className={isDark ? 'bg-slate-800 text-white' : ''}>{t('searchByBloodGroup')}</option>
-                  {bloodGroups.map(bg => (
-                    <option key={bg} value={bg} className={isDark ? 'bg-slate-800 text-white' : ''}>{bg}</option>
-                  ))}
+                  {bloodGroups.map(bg => <option key={bg} value={bg} className={isDark ? 'bg-slate-800 text-white' : ''}>{bg}</option>)}
                 </select>
               </div>
-
-              {/* Disclaimer */}
-              <div className={`mb-5 p-3 rounded-xl border ${
-                isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
-              }`}>
+              <div className={`mb-5 p-3 rounded-xl border ${isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'}`}>
                 <p className="text-yellow-500 text-sm">{t('donorDisclaimer')}</p>
               </div>
-
               {isLoadingDonors ? (
-                <div className="text-center py-10">
-                  <div className="w-10 h-10 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto" />
-                </div>
+                <div className="text-center py-10"><div className="w-10 h-10 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto" /></div>
               ) : donors.length === 0 ? (
-                <div className={`text-center py-12 ${subCls}`}>
-                  <p className="text-4xl mb-3">🩸</p>
-                  <p>{t('noDonorsFound')}</p>
-                </div>
+                <div className={`text-center py-12 ${subCls}`}><p className="text-4xl mb-3">🩸</p><p>{t('noDonorsFound')}</p></div>
               ) : (
                 <div className="grid gap-3">
                   {donors.map((donor, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      className={`p-4 rounded-xl flex items-center justify-between gap-4 ${
-                        isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'
-                      }`}
-                    >
+                    <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }} className={`p-4 rounded-xl flex items-center justify-between gap-4 ${isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'}`}>
                       <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
-                          {(donor.bloodGroup || '?')}
-                        </div>
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">{(donor.bloodGroup || '?')}</div>
                         <div>
-                          <p className={`font-semibold ${headingCls}`}>
-                            {getTranslatedField('fullName', donor.fullName || 'Anonymous')}
-                          </p>
-                          <p className={`text-sm ${subCls}`}>
-                            {donor.bloodGroup} • {donor.emergencyContactPhone || 'Contact via platform'}
-                          </p>
+                          <p className={`font-semibold ${headingCls}`}>{getTranslatedField('fullName', donor.fullName || 'Anonymous')}</p>
+                          <p className={`text-sm ${subCls}`}>{donor.bloodGroup} • {donor.emergencyContactPhone || 'Contact via platform'}</p>
                         </div>
                       </div>
                       {donor.emergencyContactPhone && (
-                        <a
-                          href={`tel:${donor.emergencyContactPhone}`}
-                          className="flex-shrink-0 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl text-sm font-semibold transition-colors"
-                        >
-                          📞 {t('contactDonor')}
-                        </a>
+                        <a href={`tel:${donor.emergencyContactPhone}`} className="flex-shrink-0 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl text-sm font-semibold transition-colors">📞 {t('contactDonor')}</a>
                       )}
                     </motion.div>
                   ))}
@@ -1087,143 +1000,45 @@ const Dashboard: React.FC = () => {
               SCAN HISTORY TAB
           ════════════════════════════════════════════════════════════════ */}
           {activeTab === 'scans' && (
-            <motion.div
-              key="scans"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className={`rounded-2xl border p-6 ${card}`}
-            >
-              <h2 className={`text-xl font-bold mb-6 ${headingCls}`}>
-                📊 {t('scanHistoryTab')}
-              </h2>
-
-              {/* Stats cards */}
+            <motion.div key="scans" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className={`rounded-2xl border p-6 ${card}`}>
+              <h2 className={`text-xl font-bold mb-6 ${headingCls}`}>📊 {t('scanHistoryTab')}</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
                 <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'}`}>
-                  <p className={`text-3xl font-bold ${headingCls}`}>{scanHistory.length}</p>
-                  <p className={`text-sm ${subCls}`}>{t('totalScans')}</p>
+                  <p className={`text-3xl font-bold ${headingCls}`}>{scanHistory.length}</p><p className={`text-sm ${subCls}`}>{t('totalScans')}</p>
                 </div>
                 <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'}`}>
-                  <p className={`text-3xl font-bold text-green-400`}>
-                    {scanHistory.filter(s => s.location).length}
-                  </p>
-                  <p className={`text-sm ${subCls}`}>With Location</p>
+                  <p className={`text-3xl font-bold text-green-400`}>{scanHistory.filter(s => s.location).length}</p><p className={`text-sm ${subCls}`}>With Location</p>
                 </div>
                 <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'}`}>
-                  <p className={`text-lg font-bold ${headingCls} leading-tight`}>
-                    {scanHistory.length > 0
-                      ? new Date(scanHistory[0]?.scannedAt).toLocaleDateString()
-                      : '—'}
-                  </p>
-                  <p className={`text-sm ${subCls}`}>{t('lastScanned')}</p>
+                  <p className={`text-lg font-bold ${headingCls} leading-tight`}>{scanHistory.length > 0 ? new Date(scanHistory[0]?.scannedAt).toLocaleDateString() : '—'}</p><p className={`text-sm ${subCls}`}>{t('lastScanned')}</p>
                 </div>
               </div>
-
               {isLoadingScans ? (
-                <div className="text-center py-10">
-                  <div className="w-10 h-10 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto" />
-                </div>
+                <div className="text-center py-10"><div className="w-10 h-10 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin mx-auto" /></div>
               ) : scanHistory.length === 0 ? (
-                <div className={`text-center py-12 ${subCls}`}>
-                  <p className="text-4xl mb-3">📊</p>
-                  <p>{t('noScans')}</p>
-                </div>
+                <div className={`text-center py-12 ${subCls}`}><p className="text-4xl mb-3">📊</p><p>{t('noScans')}</p></div>
               ) : (
                 <div className="space-y-3">
                   {scanHistory.map((scan, i) => {
                     const dt = new Date(scan.scannedAt);
                     return (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.04 }}
-                        className={`p-4 rounded-xl ${
-                          isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'
-                        }`}
-                      >
+                      <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50 border border-gray-100'}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
-                            {/* Date & Time */}
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xl">🔍</span>
-                              <div>
-                                <p className={`font-semibold text-sm ${headingCls}`}>
-                                  {dt.toLocaleDateString(undefined, {
-                                    weekday: 'short', year: 'numeric',
-                                    month: 'short', day: 'numeric',
-                                  })}
-                                </p>
-                                <p className={`text-xs ${subCls}`}>
-                                  🕐 {dt.toLocaleTimeString(undefined, {
-                                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                                  })}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Location */}
+                            <div className="flex items-center gap-2 mb-1"><span className="text-xl">🔍</span><div><p className={`font-semibold text-sm ${headingCls}`}>{dt.toLocaleDateString()}</p><p className={`text-xs ${subCls}`}>🕐 {dt.toLocaleTimeString()}</p></div></div>
                             {scan.location ? (
-                              <div className="flex items-start gap-1.5 mt-2">
-                                <span className="text-green-400 text-sm flex-shrink-0">📍</span>
-                                <div>
-                                  <p className={`text-sm ${subCls} leading-snug`}>
-                                    {scan.location.address ||
-                                      `${scan.location.latitude.toFixed(5)}, ${scan.location.longitude.toFixed(5)}`}
-                                  </p>
-                                  <p className={`text-xs mt-0.5 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
-                                    {scan.location.latitude.toFixed(6)}°N,{' '}
-                                    {scan.location.longitude.toFixed(6)}°E
-                                  </p>
-                                </div>
-                              </div>
+                              <div className="flex items-start gap-1.5 mt-2"><span className="text-green-400 text-sm flex-shrink-0">📍</span><div><p className={`text-sm ${subCls} leading-snug`}>{scan.location.address || `${scan.location.latitude.toFixed(5)}, ${scan.location.longitude.toFixed(5)}`}</p></div></div>
                             ) : (
-                              <p className={`text-xs mt-2 flex items-center gap-1.5 ${subCls}`}>
-                                <span className="w-2 h-2 bg-yellow-400 rounded-full flex-shrink-0" />
-                                {t('locationNotAvailable')}
-                              </p>
+                              <p className={`text-xs mt-2 flex items-center gap-1.5 ${subCls}`}><span className="w-2 h-2 bg-yellow-400 rounded-full flex-shrink-0" />{t('locationNotAvailable')}</p>
                             )}
                           </div>
-
-                          {/* Map link */}
                           {scan.location && (
-                            <a
-                              href={`https://www.google.com/maps?q=${scan.location.latitude},${scan.location.longitude}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-shrink-0 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1"
-                            >
-                              🗺️ Map
-                            </a>
+                            <a href={`https://www.google.com/maps?q=${scan.location.latitude},${scan.location.longitude}`} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1">🗺️ Map</a>
                           )}
-                        </div>
-
-                        {/* Scan number badge */}
-                        <div className="mt-2">
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            isDark ? 'bg-white/10 text-gray-400' : 'bg-gray-200 text-gray-500'
-                          }`}>
-                            Scan #{scanHistory.length - i}
-                          </span>
                         </div>
                       </motion.div>
                     );
                   })}
-                </div>
-              )}
-
-              {/* Legend */}
-              {scanHistory.length > 0 && (
-                <div className={`mt-4 p-3 rounded-xl flex flex-wrap gap-4 text-xs ${subCls} ${
-                  isDark ? 'bg-white/5' : 'bg-gray-50'
-                }`}>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 bg-green-400 rounded-full" /> Location detected
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 bg-yellow-400 rounded-full" /> Location unavailable
-                  </span>
                 </div>
               )}
             </motion.div>
@@ -1337,7 +1152,7 @@ const Dashboard: React.FC = () => {
                   placeholder={t('searchDoctors')}
                   className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}
                 />
-               <select
+                <select
                   value={doctorSpecialty}
                   onChange={e => setDoctorSpecialty(e.target.value)}
                   className={`px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 ${inputCls}`}

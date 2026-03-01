@@ -1,39 +1,48 @@
 // Auth Page - Login and Signup with Firebase Authentication
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 
 const Auth: React.FC = () => {
   const navigate = useNavigate();
-  const { login, signup, t, theme } = useApp();
+  const location = useLocation();
+  // We added isAuthenticated and isLoading here
+  const { login, signup, t, theme, isAuthenticated, isLoading } = useApp();
   
-  const [isSignup, setIsSignup] = useState(false);
+  // Set initial state based on the URL route
+  const [isSignup, setIsSignup] = useState(location.pathname === '/signup');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Update mode if URL changes (e.g. clicking "Signup" while on "Login" page)
+  useEffect(() => {
+    setIsSignup(location.pathname === '/signup');
+    setError('');
+  }, [location.pathname]);
+
+  // Redirect to dashboard if already logged in
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      navigate('/dashboard');
+    }
+  }, [isLoading, isAuthenticated, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
+    setIsSubmitting(true);
 
     try {
       if (isSignup) {
-        // Validation
-        if (!name.trim()) {
-          throw new Error('Please enter your name');
-        }
-        if (password.length < 6) {
-          throw new Error('Password must be at least 6 characters');
-        }
-        if (password !== confirmPassword) {
-          throw new Error('Passwords do not match');
-        }
+        if (!name.trim()) throw new Error('Please enter your name');
+        if (password.length < 6) throw new Error('Password must be at least 6 characters');
+        if (password !== confirmPassword) throw new Error('Passwords do not match');
         
         await signup(name.trim(), email.trim(), password);
         navigate('/dashboard');
@@ -44,22 +53,29 @@ const Auth: React.FC = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   const toggleMode = () => {
-    setIsSignup(!isSignup);
-    setError('');
-    setName('');
-    setPassword('');
-    setConfirmPassword('');
+    const newPath = isSignup ? '/login' : '/signup';
+    navigate(newPath);
   };
 
   const isDark = theme === 'dark';
 
+  // Show a loading spinner while Firebase is checking the session
+  if (isLoading) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-slate-900' : 'bg-gray-100'}`}>
+        <div className="w-12 h-12 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`min-h-screen flex items-center justify-center px-4 py-12 ${
+    // Replaced py-12 with pt-28 pb-12 to add top padding below the Navbar
+    <div className={`min-h-screen flex items-center justify-center px-4 pt-28 pb-12 ${
       isDark 
         ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900' 
         : 'bg-gradient-to-br from-gray-100 via-white to-gray-100'
@@ -244,12 +260,12 @@ const Auth: React.FC = () => {
 
           <motion.button
             type="submit"
-            disabled={isLoading}
+            disabled={isSubmitting}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             className="w-full py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white font-semibold rounded-xl shadow-lg shadow-red-500/25 hover:shadow-red-500/40 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {isLoading ? (
+            {isSubmitting ? (
               <>
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                 {isSignup ? t('creatingAccount') : t('signingIn')}

@@ -241,23 +241,32 @@ export const getScanHistory = async (odid: string): Promise<ScanRecord[]> => {
 // Get blood donors by blood group
 export const getBloodDonors = async (bloodGroup?: string): Promise<UserProfile[]> => {
   try {
-    let donorsQuery;
-    
-    if (bloodGroup && bloodGroup !== 'all') {
-      donorsQuery = query(
-        collection(db, 'users'),
-        where('isBloodDonor', '==', true),
-        where('bloodGroup', '==', bloodGroup)
-      );
-    } else {
-      donorsQuery = query(
-        collection(db, 'users'),
-        where('isBloodDonor', '==', true)
-      );
-    }
-    
+    // Fetch ALL users to avoid Firestore missing composite index errors
+    // (Firestore requires manual index creation for multiple where clauses)
+    const donorsQuery = query(collection(db, 'users'));
     const donorsSnapshot = await getDocs(donorsQuery);
-    return donorsSnapshot.docs.map(doc => doc.data() as UserProfile);
+    
+    const list = donorsSnapshot.docs.map(doc => doc.data() as UserProfile);
+
+    // 1. Deduplicate by odid to fix the "multiple clones" bug in the database
+    const uniqueMap = new Map<string, UserProfile>();
+    list.forEach(user => {
+      if (user.odid) {
+        uniqueMap.set(user.odid, user);
+      }
+    });
+    
+    let uniqueDonors = Array.from(uniqueMap.values());
+
+    // 2. Filter for users who are opted-in and have actually set their blood group
+    uniqueDonors = uniqueDonors.filter(donor => donor.isBloodDonor === true && !!donor.bloodGroup);
+
+    // 3. Filter by specific blood group if requested
+    if (bloodGroup && bloodGroup !== 'all') {
+      uniqueDonors = uniqueDonors.filter(donor => donor.bloodGroup === bloodGroup);
+    }
+
+    return uniqueDonors;
   } catch (error) {
     console.error('Error getting blood donors:', error);
     return [];

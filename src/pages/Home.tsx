@@ -55,7 +55,7 @@ export default function Home() {
       <LearnMoreModal isOpen={showLearnMore} onClose={() => setShowLearnMore(false)} />
 
       {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-16">
+      <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-28 md:pt-36">
         {/* Background Effects */}
         <div className="absolute inset-0">
           <div className={`absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-[128px] ${isDark ? 'bg-red-500/10' : 'bg-red-500/5'}`} />
